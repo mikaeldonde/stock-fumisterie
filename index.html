@@ -165,7 +165,11 @@ function buildIndex() {
 }
 function findProducts(code) {
   const ix = S.idx = S.idx || buildIndex(), c = norm(code);
-  return ix.exact.get(c) || ix.loose.get(c) || [];
+  const hit = ix.exact.get(c) || ix.loose.get(c);
+  if (hit) return hit;
+  // EAN-13 Lorflex/Joncoux : 355176 + code produit (6 chiffres) + clé de contrôle → 3551760396058 = LOR_039605
+  if (/^355176\d{7}$/.test(c)) return ix.loose.get(c.slice(6, 12)) || ix.exact.get('lor_' + c.slice(6, 12)) || [];
+  return [];
 }
 
 let AC;
