@@ -1,0 +1,536 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#1f2937">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg">
+<title>Stock Fumisterie</title>
+<style>
+:root{--bg:#f3f4f6;--card:#fff;--ink:#111827;--mut:#6b7280;--pri:#1f2937;--in:#16a34a;--out:#ea580c;--bad:#dc2626;--line:#e5e7eb}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink);padding-bottom:76px}
+header{background:var(--pri);color:#fff;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:5}
+header b{font-size:17px}
+header button{background:none;border:1px solid #6b7280;color:#fff;border-radius:8px;padding:6px 10px}
+main{max-width:900px;margin:0 auto;padding:12px}
+nav{position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid var(--line);display:flex;z-index:5;padding-bottom:env(safe-area-inset-bottom)}
+nav button{flex:1;padding:12px 4px;border:0;border-top:3px solid transparent;background:none;font-size:13px;color:var(--mut)}
+nav button.on{color:var(--pri);font-weight:700;border-top-color:var(--pri)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px}
+input,select,button{font:inherit}
+input,select{width:100%;padding:10px;border:1px solid #d1d5db;border-radius:8px;background:#fff}
+label{display:block;font-size:13px;color:var(--mut);margin:8px 0 3px}
+.btn{padding:12px 16px;border:0;border-radius:10px;background:var(--pri);color:#fff;font-weight:600;cursor:pointer}
+.btn.in{background:var(--in)}.btn.out{background:var(--out)}.btn.ghost{background:#e5e7eb;color:var(--ink)}.btn.bad{background:var(--bad)}
+.row{display:flex;gap:8px;align-items:center}.row>*{flex:1}
+.seg{display:flex;gap:8px;margin-bottom:10px}
+.seg button{flex:1;padding:14px;border-radius:10px;border:2px solid var(--line);background:#fff;font-weight:700;font-size:16px}
+.seg button.on.in{background:var(--in);color:#fff;border-color:var(--in)}
+.seg button.on.out{background:var(--out);color:#fff;border-color:var(--out)}
+.item{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--line);cursor:pointer}
+.item:last-child{border-bottom:0}
+.badge{display:inline-block;padding:2px 10px;border-radius:99px;background:#e5e7eb;font-weight:700}
+.badge.low{background:#fee2e2;color:var(--bad)}
+.mut{color:var(--mut);font-size:13px}
+#reader{width:100%;max-width:420px;margin:0 auto 8px;border-radius:12px;overflow:hidden}
+.toast{position:fixed;bottom:84px;left:50%;transform:translateX(-50%);padding:10px 16px;border-radius:10px;color:#fff;z-index:50;font-weight:600;max-width:90%;text-align:center}
+.toast.ok{background:var(--in)}.toast.err{background:var(--bad)}
+dialog{border:0;border-radius:14px;max-width:480px;width:94%;padding:16px}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+td,th{padding:6px 4px;border-bottom:1px solid var(--line);text-align:left}
+.in-t{color:var(--in);font-weight:700}.out-t{color:var(--out);font-weight:700}
+.chk{display:flex;gap:8px;align-items:center;font-size:14px;color:var(--ink);margin:8px 0}
+.chk input{width:auto}
+.srow{display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
+.srow input[type=checkbox]{width:auto}
+</style>
+</head>
+<body>
+
+<section id="login" hidden>
+  <main>
+    <div class="card" style="margin-top:40px">
+      <h2 style="margin-top:0">Stock Fumisterie</h2>
+      <form id="lf">
+        <label>Email</label><input id="le" type="email" required autocomplete="username">
+        <label>Mot de passe</label><input id="lp" type="password" required autocomplete="current-password">
+        <button class="btn" style="width:100%;margin-top:14px">Se connecter</button>
+      </form>
+    </div>
+  </main>
+</section>
+
+<div id="app" hidden>
+  <header><b>📦 Stock Fumisterie</b><button id="logout">Déconnexion</button></header>
+  <main id="view"></main>
+  <nav>
+    <button data-t="scan">Scanner</button>
+    <button data-t="stock">Stock</button>
+    <button data-t="sup">Fournisseurs</button>
+    <button data-t="hist">Historique</button>
+  </nav>
+</div>
+
+<dialog id="dlg"></dialog>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script>
+/* ====== CONFIGURATION : colle ici les valeurs de Supabase > Settings > API ====== */
+const CFG = {
+  url: 'https://pajnbfbrhpxzytkvhuwd.supabase.co',
+  key: 'sb_publishable_a7v6eM2aZk3LiWxknY4Dlg_RtjPgVin'
+};
+/* ================================================================================= */
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const eur = n => Number(n || 0).toLocaleString('fr-FR', {style:'currency', currency:'EUR'});
+const S = {products:[], suppliers:[], moves:[], mode:'in', tab:'scan', scanner:null, sess:[], busy:false, idx:null, q:'', low:false, email:''};
+
+let db;
+function toast(m, t = 'ok') {
+  const e = document.createElement('div');
+  e.className = 'toast ' + t; e.textContent = m;
+  document.body.append(e); setTimeout(() => e.remove(), 2600);
+}
+
+/* ---------- Authentification ---------- */
+function showLogin() { $('#app').hidden = true; $('#login').hidden = false; }
+$('#lf').onsubmit = async e => {
+  e.preventDefault();
+  const {error} = await db.auth.signInWithPassword({email: $('#le').value.trim(), password: $('#lp').value});
+  if (error) return toast('Connexion refusée : ' + error.message, 'err');
+  boot();
+};
+$('#logout').onclick = async () => { await stopCam(); await db.auth.signOut(); location.reload(); };
+
+async function boot() {
+  const {data:{session}} = await db.auth.getSession();
+  if (!session) return showLogin();
+  S.email = session.user.email;
+  $('#login').hidden = true; $('#app').hidden = false;
+  await load(); setTab(S.tab);
+  db.channel('sync').on('postgres_changes', {event:'*', schema:'public'}, () => {
+    clearTimeout(S.t); S.t = setTimeout(load, 400);
+  }).subscribe();
+}
+
+/* ---------- Données ---------- */
+// Supabase renvoie 1000 lignes max par requête : on pagine
+async function fetchAll(table, order) {
+  const out = [];
+  for (let from = 0; ; from += 1000) {
+    const {data, error} = await db.from(table).select('*').order(order).order('id').range(from, from + 999);
+    if (error) return {error};
+    out.push(...data);
+    if (data.length < 1000) break;
+  }
+  return {data: out};
+}
+async function load() {
+  const [a, b, c] = await Promise.all([
+    fetchAll('products_stock', 'name'),
+    db.from('suppliers').select('*').order('name'),
+    db.from('movements').select('*, products(name, ean)').order('created_at', {ascending:false}).limit(300)
+  ]);
+  if (a.error) return toast(a.error.message, 'err');
+  S.products = a.data; S.idx = null; S.suppliers = b.data || []; S.moves = c.data || [];
+  if (S.tab !== 'scan') render();
+}
+
+/* ---------- Navigation ---------- */
+function setTab(t) {
+  S.tab = t;
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
+  if (t !== 'scan') stopCam();
+  render();
+}
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => setTab(b.dataset.t));
+function render() { ({scan:vScan, stock:vStock, sup:vSup, hist:vHist})[S.tab](); }
+
+/* ---------- Scan : 1 scan = ±1, aucune saisie ---------- */
+const norm = s => String(s ?? '').trim().toLowerCase();
+const stripPref = r => String(r ?? '').replace(/^[^_]{1,6}_/, '');       // LOR_146177 → 146177
+
+function buildIndex() {
+  const exact = new Map(), loose = new Map();
+  const add = (m, k, p) => { if (!k) return; if (!m.has(k)) m.set(k, []); if (!m.get(k).includes(p)) m.get(k).push(p); };
+  S.products.forEach(p => { add(exact, norm(p.ean), p); add(exact, norm(p.ref), p); add(loose, norm(stripPref(p.ref)), p); });
+  return {exact, loose};
+}
+function findProducts(code) {
+  const ix = S.idx = S.idx || buildIndex(), c = norm(code);
+  return ix.exact.get(c) || ix.loose.get(c) || [];
+}
+
+let AC;
+function beep(ok) {
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.frequency.value = ok ? 1100 : 280; g.gain.value = 0.12;
+    o.connect(g); g.connect(AC.destination); o.start(); o.stop(AC.currentTime + (ok ? 0.08 : 0.25));
+  } catch (e) {}
+  if (navigator.vibrate) navigator.vibrate(ok ? 50 : [80, 60, 80]);
+}
+
+function vScan() {
+  $('#view').innerHTML = `
+  <div class="seg">
+    <button data-m="in" class="${S.mode==='in'?'on in':''}">⬇ Entrée (+1)</button>
+    <button data-m="out" class="${S.mode==='out'?'on out':''}">⬆ Sortie (−1)</button>
+  </div>
+  <div id="reader"></div>
+  <button class="btn ghost" id="camBtn" style="width:100%">${S.scanner?'Arrêter la caméra':'Activer la caméra'}</button>
+  <form id="eanForm" class="row" style="margin-top:8px">
+    <input id="eanIn" autocomplete="off" autocapitalize="off" placeholder="Douchette ou saisie manuelle du code">
+    <button class="btn ${S.mode}" style="flex:0 0 auto">OK</button>
+  </form>
+  <div id="result" style="margin-top:10px"></div>`;
+  document.querySelectorAll('.seg button').forEach(b => b.onclick = async () => {
+    const wasOn = !!S.scanner; await stopCam(); S.mode = b.dataset.m;
+    vScan(); if (wasOn) toggleCam();
+  });
+  $('#camBtn').onclick = toggleCam;
+  $('#eanForm').onsubmit = e => { e.preventDefault(); const v = $('#eanIn').value; $('#eanIn').value = ''; handleCode(v); };
+  renderSession(); focusIn();
+}
+function focusIn() { if (!S.scanner && $('#eanIn') && !document.querySelector('dialog[open]')) setTimeout(() => $('#eanIn') && $('#eanIn').focus(), 50); }
+
+async function stopCam() {
+  if (S.scanner) { try { await S.scanner.stop(); S.scanner.clear(); } catch (e) {} S.scanner = null; }
+  if ($('#camBtn')) $('#camBtn').textContent = 'Activer la caméra';
+}
+async function toggleCam() {
+  if (S.scanner) return stopCam();
+  beep(true);                                    // débloque l'audio (geste de l'utilisateur)
+  S.scanner = new Html5Qrcode('reader', {verbose:false, experimentalFeatures:{useBarCodeDetectorIfSupported:true}});
+  try {
+    await S.scanner.start({facingMode:'environment'}, {fps:12}, onScan, () => {});
+    $('#camBtn').textContent = 'Arrêter la caméra';
+  } catch (e) { S.scanner = null; toast('Caméra indisponible : ' + e, 'err'); }
+}
+
+// Une étiquette tenue devant la caméra ne compte qu'une fois ; il faut l'écarter ~0,7 s pour re-compter le même code.
+let lastCode = '', lastSeen = 0;
+function onScan(code) {
+  const t = Date.now(), again = code === lastCode && t - lastSeen < 700;
+  lastSeen = t;
+  if (again || S.busy || document.querySelector('dialog[open]')) return;
+  lastCode = code;
+  handleCode(code);
+}
+
+async function handleCode(raw) {
+  const code = String(raw).trim(); if (!code || S.busy) return;
+  const found = findProducts(code);
+  if (found.length === 1) return scanMove(found[0], S.mode);
+  if (found.length > 1) { beep(true); return pickProduct(found, p => scanMove(p, S.mode)); }
+  beep(false); unknownCode(code);
+}
+
+async function scanMove(p, type) {
+  S.busy = true;
+  try {
+    const {data, error} = await db.from('movements').insert({product_id:p.id, type, qty:1, unit_cost:p.cost, created_by:S.email}).select().single();
+    if (error) { beep(false); return toast(error.message, 'err'); }
+    p.stock += type === 'in' ? 1 : -1;                          // affichage immédiat, la synchro recharge ensuite
+    const last = S.sess[0];
+    if (last && last.pid === p.id && last.type === type) { last.mids.push(data.id); last.stock = p.stock; last.t = new Date(); }
+    else S.sess.unshift({pid:p.id, name:p.name, type, mids:[data.id], stock:p.stock, t:new Date()});
+    S.sess = S.sess.slice(0, 12);
+    beep(p.stock >= 0);
+    toast(`${type==='in'?'+1':'−1'} · ${p.name} → stock ${p.stock}${p.stock < 0 ? ' ⚠ négatif' : ''}`, p.stock < 0 ? 'err' : 'ok');
+    renderSession();
+    clearTimeout(S.t); S.t = setTimeout(load, 1200);
+  } finally { S.busy = false; focusIn(); }
+}
+
+function renderSession() {
+  const el = $('#result'); if (!el) return;
+  const hm = d => d.toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'});
+  el.innerHTML = S.sess.length ? `<div class="card"><div class="mut" style="margin-bottom:4px">Scans de cette session</div>
+    ${S.sess.map((s, i) => `<div class="item" style="cursor:default"><div><b class="${s.type==='in'?'in-t':'out-t'}">${s.type==='in'?'+':'−'}${s.mids.length}</b> · ${esc(s.name)}
+      <div class="mut">stock : ${s.stock} · ${hm(s.t)}</div></div>
+      <button class="btn ghost" data-undo="${i}" style="flex:0 0 auto">Annuler 1</button></div>`).join('')}</div>` : '';
+  el.querySelectorAll('[data-undo]').forEach(b => b.onclick = () => undoScan(+b.dataset.undo));
+}
+async function undoScan(i) {
+  const s = S.sess[i]; if (!s) return;
+  const mid = s.mids[s.mids.length - 1];
+  const {error} = await db.from('movements').delete().eq('id', mid);
+  if (error) return toast(error.message, 'err');
+  s.mids.pop(); s.stock += s.type === 'in' ? -1 : 1;
+  const p = S.products.find(x => x.id === s.pid); if (p) p.stock = s.stock;
+  if (!s.mids.length) S.sess.splice(i, 1);
+  renderSession(); toast('Scan annulé');
+  clearTimeout(S.t); S.t = setTimeout(load, 1200);
+}
+
+function openDlg(html) { const d = $('#dlg'); if (d.open) d.close(); d.innerHTML = html; d.showModal(); return d; }
+
+function pickProduct(list, cb) {
+  const d = openDlg(`<h3 style="margin-top:0">Plusieurs produits correspondent</h3>
+    ${list.map((p, i) => `<div class="item" data-i="${i}"><div><b>${esc(p.name)}</b><div class="mut">${esc([p.ref, p.supplier_name].filter(Boolean).join(' · '))}</div></div></div>`).join('')}
+    <button class="btn ghost" id="pk_x" style="width:100%;margin-top:10px">Annuler</button>`);
+  d.querySelectorAll('.item').forEach(el => el.onclick = () => { d.close(); cb(list[+el.dataset.i]); });
+  $('#pk_x').onclick = () => d.close();
+}
+
+// Code jamais vu : on l'associe une fois à un produit du catalogue, les scans suivants sont reconnus tout seuls.
+function unknownCode(code) {
+  const d = openDlg(`<h3 style="margin-top:0">Code inconnu</h3>
+    <div class="mut">Code lu : <b>${esc(code)}</b><br>Associe-le une seule fois à un produit : les prochains scans seront reconnus automatiquement.</div>
+    <label>Chercher le produit</label><input id="lk_q" placeholder="Nom ou référence…" autocomplete="off">
+    <div id="lk_list"></div>
+    <div class="row" style="margin-top:12px"><button class="btn ghost" id="lk_x">Ignorer</button><button class="btn ghost" id="lk_new">Créer un produit</button></div>`);
+  const draw = () => {
+    const q = norm($('#lk_q').value);
+    const list = (q ? S.products.filter(p => matchQ(p, q)) : []).slice(0, 25);
+    $('#lk_list').innerHTML = list.map(p => `<div class="item" data-id="${p.id}"><div><b>${esc(p.name)}</b><div class="mut">${esc([p.ref, p.supplier_name].filter(Boolean).join(' · '))}</div></div></div>`).join('')
+      || `<div class="mut" style="padding:8px 0">${q ? 'Aucun résultat' : 'Tape quelques lettres du nom ou de la référence'}</div>`;
+    $('#lk_list').querySelectorAll('.item').forEach(el => el.onclick = () => linkCode(code, S.products.find(x => x.id === el.dataset.id)));
+  };
+  $('#lk_q').oninput = draw; draw();
+  $('#lk_x').onclick = () => d.close();
+  $('#lk_new').onclick = () => { d.close(); productForm({ean: code, ref: code}, row => { const np = S.products.find(x => x.id === row.id); if (np) scanMove(np, S.mode); }); };
+}
+async function linkCode(code, p) {
+  if (!p) return;
+  if (p.ean && p.ean !== code && !confirm(`« ${p.name} » a déjà le code ${p.ean}. Le remplacer par ${code} ?`)) return;
+  const {error} = await db.from('products').update({ean: code}).eq('id', p.id);
+  if (error) return toast(error.code === '23505' ? 'Ce code est déjà utilisé par un autre produit' : error.message, 'err');
+  $('#dlg').close(); p.ean = code; S.idx = null;
+  scanMove(p, S.mode);
+}
+
+/* ---------- Fiche produit ---------- */
+function productForm(p = {}, afterSave) {
+  const d = $('#dlg');
+  d.innerHTML = `<h3 style="margin-top:0">${p.id ? 'Modifier' : 'Nouveau'} produit</h3>
+    <label>Code-barres / EAN (optionnel)</label><input id="f_ean" value="${esc(p.ean)}">
+    <label>Désignation</label><input id="f_name" value="${esc(p.name)}">
+    <label>Référence fournisseur (ex. LOR_146177)</label><input id="f_ref" value="${esc(p.ref)}">
+    <label>Diamètre</label><input id="f_diam" value="${esc(p.diameter)}">
+    <label>Fournisseur</label>
+    <select id="f_sup"><option value="">—</option>${S.suppliers.map(s => `<option value="${s.id}" ${s.id===p.supplier_id?'selected':''}>${esc(s.name)}</option>`).join('')}</select>
+    <label>Prix d'achat HT (€)</label><input id="f_cost" type="number" step="0.01" value="${p.cost ?? ''}">
+    <label>Stock minimum (alerte)</label><input id="f_min" type="number" value="${p.min_stock ?? 0}">
+    <div class="row" style="margin-top:14px"><button class="btn ghost" id="f_cancel">Annuler</button><button class="btn" id="f_save">Enregistrer</button></div>
+    ${p.id ? '<button class="btn bad" id="f_del" style="width:100%;margin-top:10px">Supprimer ce produit</button>' : ''}`;
+  d.showModal();
+  $('#f_cancel').onclick = () => { d.close(); focusIn(); };
+  if (p.id) $('#f_del').onclick = async () => {
+    if (!confirm('Supprimer ce produit ? (impossible s\'il a des mouvements)')) return;
+    const {error} = await db.from('products').delete().eq('id', p.id);
+    if (error) return toast('Suppression impossible : le produit a un historique', 'err');
+    d.close(); load(); toast('Produit supprimé');
+  };
+  $('#f_save').onclick = async () => {
+    const row = {
+      ean: $('#f_ean').value.trim() || null, name: $('#f_name').value.trim(),
+      ref: $('#f_ref').value.trim() || $('#f_ean').value.trim(), diameter: $('#f_diam').value.trim() || null,
+      supplier_id: $('#f_sup').value || null,
+      cost: parseFloat($('#f_cost').value) || 0, min_stock: parseInt($('#f_min').value) || 0
+    };
+    if (!row.ref || !row.name) return toast('Désignation et référence (ou code-barres) obligatoires', 'err');
+    const q = p.id ? db.from('products').update(row).eq('id', p.id).select().single()
+                   : db.from('products').insert(row).select().single();
+    const {data, error} = await q;
+    if (error) return toast(error.code === '23505' ? 'Cette référence ou ce code existe déjà' : error.message, 'err');
+    d.close(); await load(); toast('Produit enregistré'); if (afterSave) afterSave(data);
+  };
+}
+
+/* ---------- Stock ---------- */
+const isLow = p => p.stock < 0 || (p.min_stock > 0 && p.stock <= p.min_stock);
+const matchQ = (p, q) => !q || [p.name, p.ref, p.ean, p.diameter, p.supplier_name].join(' ').toLowerCase().includes(q);
+
+function vStock() {
+  const q = (S.q || '').trim().toLowerCase();
+  const onlyStock = S.onlyStock !== false && !q;          // une recherche porte sur tout le catalogue
+  const list = S.products.filter(p => matchQ(p, q) && (!S.low || isLow(p)) && (!onlyStock || p.stock !== 0));
+  const shown = list.slice(0, 200);
+  const total = S.products.reduce((s, p) => s + p.stock * Number(p.cost), 0);
+  const pieces = S.products.reduce((s, p) => s + p.stock, 0);
+  const nStock = S.products.filter(p => p.stock !== 0).length;
+  $('#view').innerHTML = `
+  <div class="card"><div class="mut">Valeur du stock (prix d'achat HT)</div>
+    <div style="font-size:28px;font-weight:700">${eur(total)}</div>
+    <div class="mut">${nStock} références en stock · ${pieces} pièces · ${S.products.length} au catalogue</div></div>
+  <div class="row"><input id="q" placeholder="Rechercher (nom, réf, EAN, diamètre…)" value="${esc(S.q)}"><button class="btn" id="np" style="flex:0 0 auto">+ Produit</button></div>
+  <label class="chk"><input type="checkbox" id="only" ${S.onlyStock !== false ? 'checked' : ''}> Seulement les produits en stock <span class="mut">(la recherche couvre tout le catalogue)</span></label>
+  <label class="chk"><input type="checkbox" id="low" ${S.low ? 'checked' : ''}> Stock bas uniquement</label>
+  <div class="card">${shown.map(p => `
+    <div class="item" data-id="${p.id}">
+      <div><b>${esc(p.name)}</b><div class="mut">${esc([p.ref, p.diameter, p.supplier_name].filter(Boolean).join(' · '))}</div></div>
+      <div style="text-align:right"><span class="badge ${isLow(p) ? 'low' : ''}">${p.stock}</span><div class="mut">${eur(p.stock * p.cost)}</div></div>
+    </div>`).join('') || `<div class="mut">${S.products.length ? 'Aucun produit en stock pour l\'instant. Cherche un produit ci-dessus ou décoche « Seulement les produits en stock ».' : 'Catalogue vide : utilise « Importer » ci-dessous.'}</div>`}
+    ${list.length > shown.length ? `<div class="mut" style="padding-top:8px">${list.length - shown.length} autres résultats : affine la recherche.</div>` : ''}</div>
+  <button class="btn ghost" id="imp" style="width:100%">Importer (CSV)</button>
+  <button class="btn ghost" id="exs" style="width:100%;margin-top:8px">Exporter le stock (CSV / Excel)</button>`;
+  $('#q').oninput = e => { S.q = e.target.value; vStock(); const i = $('#q'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); };
+  $('#only').onchange = e => { S.onlyStock = e.target.checked; vStock(); };
+  $('#low').onchange = e => { S.low = e.target.checked; vStock(); };
+  $('#np').onclick = () => productForm({});
+  $('#imp').onclick = importWizard;
+  document.querySelectorAll('.item').forEach(el => el.onclick = () => productForm(S.products.find(x => x.id === el.dataset.id)));
+  $('#exs').onclick = () => csv([['EAN','Désignation','Référence','Diamètre','Fournisseur','Stock','Prix achat HT','Valeur','Stock min'],
+    ...S.products.filter(p => p.stock !== 0).map(p => [p.ean, p.name, p.ref, p.diameter, p.supplier_name, p.stock, p.cost, (p.stock * p.cost).toFixed(2), p.min_stock])], 'stock.csv');
+}
+
+/* ---------- Import CSV ---------- */
+function parseCSV(text) {
+  text = text.replace(/^\ufeff/, '');
+  const head = text.split('\n')[0];
+  const sep = (head.match(/;/g) || []).length >= (head.match(/,/g) || []).length ? ';' : ',';
+  const rows = []; let row = [], cur = '', inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQ) { if (c === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else inQ = false; } else cur += c; }
+    else if (c === '"') inQ = true;
+    else if (c === sep) { row.push(cur); cur = ''; }
+    else if (c === '\n') { row.push(cur); rows.push(row); row = []; cur = ''; }
+    else if (c !== '\r') cur += c;
+  }
+  if (cur !== '' || row.length) { row.push(cur); rows.push(row); }
+  if (!rows.length) return [];
+  const h = rows.shift().map(x => x.trim().toLowerCase());
+  return rows.filter(r => r.length > 1).map(r => Object.fromEntries(h.map((k, i) => [k, (r[i] ?? '').trim()])));
+}
+
+function importWizard() {
+  const d = $('#dlg');
+  d.innerHTML = `<h3 style="margin-top:0">Importer des produits (CSV)</h3>
+    <input type="file" id="imp_f" accept=".csv,.txt,text/csv,text/plain">
+    <div id="imp_body" class="mut" style="margin-top:10px">Choisis le fichier <b>import_produits.csv</b>.</div>
+    <div class="row" style="margin-top:14px"><button class="btn ghost" id="imp_x">Fermer</button><button class="btn" id="imp_go" hidden>Importer</button></div>
+    <datalist id="sup_dl">${S.suppliers.map(s => `<option value="${esc(s.name)}">`).join('')}</datalist>`;
+  d.showModal();
+  $('#imp_x').onclick = () => d.close();
+  let rows = [], groups = [];
+
+  $('#imp_f').onchange = async e => {
+    const f = e.target.files[0]; if (!f) return;
+    rows = parseCSV(await f.text()).filter(r => r.ref && r.name);
+    if (!rows.length) { $('#imp_body').textContent = 'Fichier vide ou colonnes « ref » et « name » introuvables.'; return; }
+    const by = {};
+    rows.forEach(r => { const k = r.sup || ''; (by[k] = by[k] || []).push(r); });
+    groups = Object.entries(by).map(([k, rs]) => ({k, rs})).sort((a, b) => b.rs.length - a.rs.length);
+    const known = new Set(S.products.map(p => p.ref));
+    const already = rows.filter(r => known.has(r.ref)).length;
+    $('#imp_body').innerHTML = `
+      <div><b>${rows.length}</b> produits dans le fichier${already ? `, dont ${already} déjà présents` : ''}.</div>
+      <div class="mut" style="margin:6px 0">Nomme chaque fournisseur (tu peux décocher ceux que tu ne veux pas importer).</div>
+      ${groups.map((g, i) => `<div class="srow">
+        <input type="checkbox" id="g_in${i}" checked>
+        <div><input id="g_nm${i}" list="sup_dl" value="${esc(g.rs[0].hint || '')}" placeholder="Nom du fournisseur">
+          <div class="mut">${g.rs.length} produits · codes ${esc(g.rs[0].hint || '?')} · ex. ${esc(g.rs[0].name.slice(0, 50))}</div></div></div>`).join('')}
+      <label class="chk"><input type="checkbox" id="imp_upd"> Mettre à jour les produits déjà présents (nom, prix, fournisseur)</label>`;
+    $('#imp_go').hidden = false;
+  };
+
+  $('#imp_go').onclick = async () => {
+    const chosen = groups.map((g, i) => ({g, on: $('#g_in' + i).checked, name: $('#g_nm' + i).value.trim()})).filter(x => x.on);
+    if (!chosen.length) return toast('Aucun fournisseur sélectionné', 'err');
+    if (chosen.some(x => !x.name)) return toast('Donne un nom à chaque fournisseur coché', 'err');
+    const update = $('#imp_upd').checked;
+    $('#imp_go').disabled = true;
+    const status = t => { $('#imp_body').innerHTML = `<b>${t}</b>`; };
+    try {
+      // 1. fournisseurs (créés s'ils n'existent pas)
+      status('Fournisseurs…');
+      const ids = new Map(S.suppliers.map(s => [s.name.toLowerCase(), s.id]));
+      const toCreate = [...new Set(chosen.map(x => x.name).filter(n => !ids.has(n.toLowerCase())))];
+      if (toCreate.length) {
+        const {data, error} = await db.from('suppliers').insert(toCreate.map(name => ({name}))).select();
+        if (error) throw error;
+        data.forEach(s => ids.set(s.name.toLowerCase(), s.id));
+      }
+      // 2. produits par lots de 500
+      const byRef = new Map();
+      chosen.forEach(x => x.g.rs.forEach(r => byRef.set(r.ref, {
+        ref: r.ref, name: r.name, supplier_id: ids.get(x.name.toLowerCase()),
+        cost: parseFloat(String(r.cost).replace(',', '.')) || 0, ...(r.ean ? {ean: r.ean} : {})   // on n'écrase jamais un code déjà associé
+      })));
+      const all = [...byRef.values()]; let done = 0;
+      // lots homogènes (avec / sans EAN) pour que l'upsert ne remette pas de colonne à null
+      const parts = [all.filter(r => r.ean), all.filter(r => !r.ean)];
+      for (const part of parts) for (let i = 0; i < part.length; i += 500) {
+        status(`Produits… ${done} / ${all.length}`);
+        const {data, error} = await db.from('products').upsert(part.slice(i, i + 500), {onConflict: 'ref', ignoreDuplicates: !update}).select('ref');
+        if (error) throw error;
+        done += data.length;
+      }
+      await load();
+      $('#imp_body').innerHTML = `<b>Terminé :</b> ${done} produits ${update ? 'créés ou mis à jour' : 'créés'}${all.length - done ? `, ${all.length - done} déjà présents ignorés` : ''}.`;
+      $('#imp_go').hidden = true; $('#imp_x').textContent = 'Fermer';
+    } catch (err) {
+      $('#imp_body').innerHTML = `<b style="color:var(--bad)">Erreur :</b> ${esc(err.message || err)}`;
+      $('#imp_go').disabled = false;
+    }
+  };
+}
+
+/* ---------- Fournisseurs ---------- */
+function vSup() {
+  $('#view').innerHTML = `
+  <div class="card"><form id="sf">
+    <label>Nouveau fournisseur</label><input id="sn" placeholder="Nom" required>
+    <label>Contact (optionnel)</label><input id="sc" placeholder="Téléphone, email…">
+    <button class="btn" style="width:100%;margin-top:10px">Ajouter</button></form></div>
+  <div class="card">${S.suppliers.map(s => `
+    <div class="item" style="cursor:default"><div><b>${esc(s.name)}</b><div class="mut">${esc(s.contact || '')}</div></div>
+    <button class="btn ghost" data-del="${s.id}" style="flex:0 0 auto">Supprimer</button></div>`).join('') || '<div class="mut">Aucun fournisseur</div>'}</div>`;
+  $('#sf').onsubmit = async e => {
+    e.preventDefault();
+    const {error} = await db.from('suppliers').insert({name: $('#sn').value.trim(), contact: $('#sc').value.trim() || null});
+    if (error) return toast(error.message, 'err');
+    await load(); toast('Fournisseur ajouté');
+  };
+  document.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+    if (!confirm('Supprimer ce fournisseur ?')) return;
+    const {error} = await db.from('suppliers').delete().eq('id', b.dataset.del);
+    if (error) return toast('Impossible : des produits utilisent ce fournisseur', 'err');
+    await load();
+  });
+}
+
+/* ---------- Historique ---------- */
+function vHist() {
+  const fmt = d => new Date(d).toLocaleString('fr-FR', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'});
+  $('#view').innerHTML = `
+  <div class="card" style="overflow-x:auto"><table>
+    <tr><th>Date</th><th>Produit</th><th>Mvt</th><th>Qté</th><th>Coût</th></tr>
+    ${S.moves.map(m => `<tr><td>${fmt(m.created_at)}</td><td>${esc(m.products?.name || '?')}</td>
+      <td class="${m.type==='in'?'in-t':'out-t'}">${m.type==='in'?'Entrée':'Sortie'}</td><td>${m.qty}</td><td>${m.unit_cost != null ? eur(m.unit_cost) : ''}</td></tr>`).join('')}
+  </table></div>
+  <button class="btn ghost" id="exh" style="width:100%">Exporter l'historique (CSV / Excel)</button>`;
+  $('#exh').onclick = () => csv([['Date','EAN','Produit','Mouvement','Quantité','Coût unitaire','Utilisateur'],
+    ...S.moves.map(m => [new Date(m.created_at).toLocaleString('fr-FR'), m.products?.ean, m.products?.name, m.type==='in'?'Entrée':'Sortie', m.qty, m.unit_cost, m.created_by])], 'historique.csv');
+}
+
+/* ---------- Export CSV (séparateur ; pour Excel FR) ---------- */
+function csv(rows, name) {
+  const t = rows.map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(';')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['\ufeff' + t], {type:'text/csv;charset=utf-8'}));
+  a.download = name; a.click();
+}
+
+/* ---------- Démarrage ---------- */
+if (CFG.url.includes('COLLE_ICI')) {
+  document.body.innerHTML = '<main><div class="card"><h3>Configuration manquante</h3><p>Ouvre <b>index.html</b> et remplace <code>CFG.url</code> et <code>CFG.key</code> par les valeurs de Supabase (Settings → API).</p></div></main>';
+} else {
+  db = supabase.createClient(CFG.url, CFG.key);
+  boot();
+}
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+</script>
+</body>
+</html>
