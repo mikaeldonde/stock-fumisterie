@@ -229,6 +229,7 @@ let lastCode = '', lastSeen = 0;
 function onScan(code) {
   const t = Date.now(), again = code === lastCode && t - lastSeen < 700;
   lastSeen = t;
+  if (/^https?:\/\//i.test(code)) return;   // QR « INFO » des étiquettes (ex. Dinak) : on ne garde que le code-barres
   if (S.ocr || again || S.busy || document.querySelector('dialog[open]')) return;
   lastCode = code;
   handleCode(code);
