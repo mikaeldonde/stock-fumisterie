@@ -90,7 +90,7 @@ const CFG = {
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const eur = n => Number(n || 0).toLocaleString('fr-FR', {style:'currency', currency:'EUR'});
-const S = {products:[], suppliers:[], moves:[], mode:'in', tab:'scan', scanner:null, sess:[], busy:false, idx:null, q:'', low:false, email:''};
+const S = {products:[], suppliers:[], moves:[], mode:'in', tab:'scan', scanner:null, sess:[], busy:false, ocr:false, idx:null, q:'', low:false, email:''};
 
 let db;
 function toast(m, t = 'ok') {
@@ -189,8 +189,10 @@ function vScan() {
     <button data-m="in" class="${S.mode==='in'?'on in':''}">⬇ Entrée (+1)</button>
     <button data-m="out" class="${S.mode==='out'?'on out':''}">⬆ Sortie (−1)</button>
   </div>
-  <div id="reader"></div>
+  <div style="position:relative"><div id="reader"></div>${S.ocr ? '<div style="position:absolute;left:3%;right:3%;top:34%;height:32%;border:2px dashed #fff;border-radius:8px;box-shadow:0 0 0 9999px rgba(0,0,0,.35);pointer-events:none"></div>' : ''}</div>
   <button class="btn ghost" id="camBtn" style="width:100%">${S.scanner?'Arrêter la caméra':'Activer la caméra'}</button>
+  <button class="btn ${S.ocr?'':'ghost'}" id="txtBtn" style="width:100%;margin-top:8px">🔤 Lecture du texte (Dixneuf) : ${S.ocr?'ACTIVÉE':'désactivée'}</button>
+  ${S.ocr ? '<button class="btn '+S.mode+'" id="ocrGo" style="width:100%;margin-top:8px;padding:16px">📸 Lire l\'étiquette</button><div class="mut" style="margin-top:4px">Cadrez la ligne en gros (ex. 017.PES2040110) dans le rectangle en pointillés, puis appuyez.</div>' : ''}
   <form id="eanForm" class="row" style="margin-top:8px">
     <input id="eanIn" autocomplete="off" autocapitalize="off" placeholder="Douchette ou saisie manuelle du code">
     <button class="btn ${S.mode}" style="flex:0 0 auto">OK</button>
@@ -201,6 +203,8 @@ function vScan() {
     vScan(); if (wasOn) toggleCam();
   });
   $('#camBtn').onclick = toggleCam;
+  $('#txtBtn').onclick = async () => { const wasOn = !!S.scanner; await stopCam(); S.ocr = !S.ocr; vScan(); if (wasOn) toggleCam(); };
+  if ($('#ocrGo')) $('#ocrGo').onclick = ocrScan;
   $('#eanForm').onsubmit = e => { e.preventDefault(); const v = $('#eanIn').value; $('#eanIn').value = ''; handleCode(v); };
   renderSession(); focusIn();
 }
@@ -225,7 +229,7 @@ let lastCode = '', lastSeen = 0;
 function onScan(code) {
   const t = Date.now(), again = code === lastCode && t - lastSeen < 700;
   lastSeen = t;
-  if (again || S.busy || document.querySelector('dialog[open]')) return;
+  if (S.ocr || again || S.busy || document.querySelector('dialog[open]')) return;
   lastCode = code;
   handleCode(code);
 }
@@ -278,12 +282,62 @@ async function undoScan(i) {
 
 function openDlg(html) { const d = $('#dlg'); if (d.open) d.close(); d.innerHTML = html; d.showModal(); return d; }
 
-function pickProduct(list, cb) {
-  const d = openDlg(`<h3 style="margin-top:0">Plusieurs produits correspondent</h3>
+function pickProduct(list, cb, title = 'Plusieurs produits correspondent') {
+  const d = openDlg(`<h3 style="margin-top:0">${esc(title)}</h3>
     ${list.map((p, i) => `<div class="item" data-i="${i}"><div><b>${esc(p.name)}</b><div class="mut">${esc([p.ref, p.supplier_name].filter(Boolean).join(' · '))}</div></div></div>`).join('')}
     <button class="btn ghost" id="pk_x" style="width:100%;margin-top:10px">Annuler</button>`);
   d.querySelectorAll('.item').forEach(el => el.onclick = () => { d.close(); cb(list[+el.dataset.i]); });
   $('#pk_x').onclick = () => d.close();
+}
+
+
+/* ---------- Lecture du texte imprimé (Dixneuf : le code-barres ne contient pas la référence) ---------- */
+let ocrWorker = null;
+function loadScript(src) { return new Promise((ok, ko) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => ko(new Error('chargement impossible')); document.head.appendChild(s); }); }
+async function getOcr() {
+  if (ocrWorker) return ocrWorker;
+  if (!window.Tesseract) await loadScript('https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js');
+  ocrWorker = await Tesseract.createWorker('eng');
+  await ocrWorker.setParameters({tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-/ '});
+  return ocrWorker;
+}
+function lev(a, b) {
+  const m = a.length, n = b.length; let prev = Array.from({length: n + 1}, (_, j) => j);
+  for (let i = 1; i <= m; i++) { const cur = [i]; for (let j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j-1] + 1, prev[j-1] + (a[i-1] === b[j-1] ? 0 : 1)); prev = cur; }
+  return prev[n];
+}
+// Cherche, parmi les références du catalogue, celles qui ressemblent aux mots lus (l'OCR confond parfois 0/9, 1/I…).
+function matchText(text) {
+  const toks = [...new Set(String(text).toUpperCase().split(/\s+/).map(t => t.replace(/[^A-Z0-9._\-\/]/g, '')).filter(t => t.length >= 7 && /\d/.test(t)))];
+  const keys = S.products.map(p => ({p, k: stripPref(p.ref).toUpperCase()}));
+  const best = new Map();
+  for (const t of toks) for (const {p, k} of keys) {
+    if (Math.abs(k.length - t.length) > 2) continue;
+    const d = lev(t, k), max = Math.max(1, Math.floor(k.length * 0.15));
+    if (d <= max && (!best.has(p.id) || best.get(p.id).d > d)) best.set(p.id, {p, d});
+  }
+  return [...best.values()].sort((a, b) => a.d - b.d);
+}
+async function ocrScan() {
+  const v = document.querySelector('#reader video');
+  if (!v || !v.videoWidth) return toast("Activez d'abord la caméra", 'err');
+  if (S.busy) return;
+  S.busy = true; const btn = $('#ocrGo'); if (btn) { btn.disabled = true; btn.textContent = 'Lecture en cours…'; }
+  try {
+    const W = v.videoWidth, H = v.videoHeight, y0 = Math.round(H * 0.33), h = Math.round(H * 0.34);
+    const sc = Math.min(1, 1600 / W), cv = document.createElement('canvas'); cv.width = Math.round(W * sc); cv.height = Math.round(h * sc);
+    const cx = cv.getContext('2d'); cx.filter = 'grayscale(1) contrast(1.6)'; cx.drawImage(v, 0, y0, W, h, 0, 0, cv.width, cv.height);
+    const w = await getOcr(); let text = '';
+    await w.setParameters({tessedit_pageseg_mode: '7'}); text += (await w.recognize(cv)).data.text + '\n';
+    await w.setParameters({tessedit_pageseg_mode: '6'}); text += (await w.recognize(cv)).data.text;
+    const res = matchText(text);
+    if (!res.length) { beep(false); return toast('Texte non reconnu : rapprochez-vous et recadrez la ligne en gros', 'err'); }
+    S.busy = false;
+    if (res[0].d === 0 && (res.length === 1 || res[1].d > 0)) return scanMove(res[0].p, S.mode);
+    beep(true);
+    pickProduct(res.slice(0, 5).map(r => r.p), p => scanMove(p, S.mode), 'Confirmez le produit');
+  } catch (e) { toast('Lecture impossible : ' + (e.message || e), 'err'); }
+  finally { S.busy = false; if ($('#ocrGo')) { $('#ocrGo').disabled = false; $('#ocrGo').textContent = "📸 Lire l'étiquette"; } }
 }
 
 // Code jamais vu : on l'associe une fois à un produit du catalogue, les scans suivants sont reconnus tout seuls.
